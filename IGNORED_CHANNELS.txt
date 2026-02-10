@@ -1,0 +1,2 @@
+# List channels to ignore here (one per line)
+# You can include the # or not.

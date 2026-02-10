@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discord Data Viewer</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Outfit:wght@400;700&display=swap"
+        rel="stylesheet">
+</head>
+
+<body class="dark-theme">
+    <div class="container">
+        <header>
+            <h1>Discord Data <span>Dashboard</span></h1>
+            <p>Search, analyze, and explore your discord message history.</p>
+        </header>
+
+        <section class="controls">
+            <div class="search-box">
+                <input type="text" id="keyword" placeholder="Search keywords...">
+                <input type="text" id="username" placeholder="Search username...">
+                <button id="search-btn">Search</button>
+            </div>
+            <div class="stats-toggle">
+                <button id="refresh-stats">Refresh Word Frequency</button>
+            </div>
+        </section>
+
+        <main class="dashboard-grid">
+            <div class="panel messages-panel" id="search-results-panel">
+                <h2>Message History</h2>
+                <div id="messages-list" class="message-list">
+                    <p class="placeholder">Search to see results...</p>
+                </div>
+            </div>
+
+            <div class="panel messages-panel" id="context-panel">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; margin-bottom: 1.5rem;">
+                    <h2 style="border: none; margin: 0;">Chat Context</h2>
+                    <button class="back-btn" id="context-back-btn" style="padding: 0.5rem 1rem; margin: 0;">← Back to
+                        Results</button>
+                </div>
+                <div id="context-list" class="message-list">
+                    <p class="placeholder">Loading context...</p>
+                </div>
+            </div>
+
+            <div class="panel stats-panel">
+                <h2>Word Frequency</h2>
+                <div id="frequency-table" class="freq-container">
+                    <p class="placeholder">Click refresh to load stats...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    <script src="script.js"></script>
+</body>
+
+</html>
