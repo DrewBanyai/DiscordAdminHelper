@@ -239,8 +239,18 @@ async def on_ready():
     if not poll_discord.is_running():
         poll_discord.start()
 
+import sys
+
 if __name__ == "__main__":
     if not TOKEN:
         print("Error: DISCORD_TOKEN not found in .env file.")
-    else:
+        sys.exit(1)
+    
+    try:
         bot.run(TOKEN)
+    except discord.LoginFailure:
+        print("Error: Invalid Discord token. Please check your .env file.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"An unexpected error occurred while starting the bot: {e}")
+        sys.exit(1)
