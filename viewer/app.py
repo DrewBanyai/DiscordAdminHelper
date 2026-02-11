@@ -5,6 +5,14 @@ import os
 from collections import Counter
 from fastapi.staticfiles import StaticFiles
 import re
+import httpx
+from dotenv import load_dotenv
+
+# Find root directory (where scraper and .env live) relative to this script
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+load_dotenv(os.path.join(BASE_DIR, '.env'))
+
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
 
 app = FastAPI()
 
@@ -16,8 +24,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DB_NAME = os.getenv('DATABASE_NAME', '../discord_data.db')
-ATTACHMENTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'attachments'))
+# Use absolute path for the database to avoid "no such table" errors if started from wrong directory
+DB_NAME = os.getenv('DATABASE_NAME', 'discord_data.db')
+if not os.path.isabs(DB_NAME):
+    DB_NAME = os.path.abspath(os.path.join(BASE_DIR, DB_NAME))
+
+print(f"Viewer Backend: Using database at {DB_NAME}")
+ATTACHMENTS_DIR = os.path.join(BASE_DIR, 'attachments')
 
 # Ensure directory exists but technically the scraper creates it
 if not os.path.exists(ATTACHMENTS_DIR):
@@ -75,15 +88,33 @@ def get_messages(
     return results
 
 @app.get("/stats/word-frequency")
-def get_word_frequency(limit: int = 20):
+def get_word_frequency(limit: int = 20, timeframe: str = Query('all')):
     conn = get_db_connection()
-    # Get all message contents
-    messages = conn.execute("SELECT content FROM messages").fetchall()
+    query = "SELECT content FROM messages"
+    params = []
+    
+    if timeframe != 'all':
+        from datetime import datetime, timedelta
+        now = datetime.utcnow()
+        if timeframe == '24h':
+            delta = timedelta(hours=24)
+        elif timeframe == '7d':
+            delta = timedelta(days=7)
+        elif timeframe == '30d':
+            delta = timedelta(days=30)
+        else:
+            delta = None
+            
+        if delta:
+            since = (now - delta).isoformat()
+            query += " WHERE timestamp >= ?"
+            params.append(since)
+            
+    messages = conn.execute(query, params).fetchall()
     conn.close()
     
     words = []
-    # Basic tokenization and common stop words removal
-    stop_words = set(['the', 'is', 'at', 'which', 'on', 'and', 'a', 'an', 'to', 'in', 'it', 'for', 'of', 'with', 'as', 'by', 'be'])
+    stop_words = set(['the', 'is', 'at', 'which', 'on', 'and', 'a', 'an', 'to', 'in', 'it', 'for', 'of', 'with', 'as', 'by', 'be', 'you', 'this', 'that', 'with', 'was', 'i', 'my', 'me'])
     
     for msg in messages:
         if msg['content']:
@@ -100,8 +131,10 @@ class FlagUpdate(BaseModel):
 
 @app.put("/messages/{message_id}/flag")
 def update_message_flag(message_id: int, update: FlagUpdate):
-    if update.flag not in ['none', 'green', 'red']:
-        return {"error": "Invalid flag color"}
+    # Support traditional flags or the new pending_react:emoji format
+    valid_static_flags = ['none', 'green', 'red']
+    if update.flag not in valid_static_flags and not update.flag.startswith('pending_react:'):
+        return {"error": "Invalid flag format"}
     
     conn = get_db_connection()
     conn.execute("UPDATE messages SET flag = ? WHERE id = ?", (update.flag, message_id))
@@ -153,6 +186,50 @@ def get_message_context(message_id: int):
     
     conn.close()
     return results
+
+@app.get("/messages/{message_id}/reactions")
+async def get_message_reactions(message_id: int):
+    if not DISCORD_TOKEN:
+        return {"error": "Discord token not configured"}
+    
+    conn = get_db_connection()
+    msg = conn.execute("SELECT channel_id FROM messages WHERE id = ?", (message_id,)).fetchone()
+    conn.close()
+    
+    if not msg:
+        return {"error": "Message not found in database"}
+    
+    channel_id = msg['channel_id']
+    url = f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}"
+    headers = {"Authorization": f"Bot {DISCORD_TOKEN}"}
+    
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200:
+                return {"error": f"Discord API returned {response.status_code}", "detail": response.text}
+            
+            data = response.json()
+            reactions = data.get('reactions', [])
+            
+            # Simplify reaction list for frontend
+            results = []
+            for r in reactions:
+                emoji = r['emoji']
+                emoji_str = emoji['name']
+                if emoji.get('id'):
+                    # Custom emoji format: name:id
+                    emoji_str = f"{emoji['name']}:{emoji['id']}"
+                
+                results.append({
+                    "name": emoji['name'],
+                    "id": emoji.get('id'),
+                    "count": r['count'],
+                    "emoji_str": emoji_str
+                })
+            return results
+        except Exception as e:
+            return {"error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,7 +1,40 @@
 const API_BASE = "http://localhost:8000";
 
 document.getElementById('search-btn').addEventListener('click', searchMessages);
-document.getElementById('refresh-stats').addEventListener('click', fetchStats);
+document.getElementById('refresh-stats').addEventListener('click', () => fetchStats(currentTimeframe));
+
+let currentTimeframe = 'all';
+
+// Tab Switching Logic
+document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+
+        // Update Buttons
+        document.querySelectorAll('.tab-nav .tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Update Content
+        document.querySelectorAll('.tab-content').forEach(c => c.style.display = 'none');
+        document.getElementById(`${tab}-tab`).style.display = 'block';
+
+        // Update Controls
+        document.getElementById('messages-controls').style.display = tab === 'messages' ? 'flex' : 'none';
+        document.getElementById('stats-controls').style.display = tab === 'stats' ? 'flex' : 'none';
+
+        if (tab === 'stats') fetchStats(currentTimeframe);
+    });
+});
+
+// Timeframe Filter Logic
+document.querySelectorAll('.time-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+        currentTimeframe = btn.dataset.time;
+        document.querySelectorAll('.timeframe-btns .time-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        fetchStats(currentTimeframe);
+    });
+});
 
 async function searchMessages() {
     const keyword = document.getElementById('keyword').value;
@@ -41,7 +74,7 @@ function renderMessage(msg, isTarget = false) {
         <div class="message-item ${isTarget ? 'target-message' : ''} ${flagClass}" id="msg-${msg.id}">
             <div class="message-header">
                 <span class="author">${escapeHtml(msg.author_name)}</span>
-                <span class="flag-indicator">${flagIcon}</span>
+                <span class="flag-indicator">${getFlagIcon(msg.flag)}</span>
                 <span class="timestamp">${formatDate(msg.timestamp)}</span>
             </div>
             <div class="content">${escapeHtml(msg.content)}</div>
@@ -53,11 +86,87 @@ function renderMessage(msg, isTarget = false) {
             <div class="flag-controls">
                 <button class="flag-btn green" onclick="toggleFlag('${msg.id}', 'green')">Green</button>
                 <button class="flag-btn red" onclick="toggleFlag('${msg.id}', 'red')">Red</button>
+                <button class="flag-btn react" onclick="promptReact('${msg.id}')">React</button>
                 <button class="flag-btn none" onclick="toggleFlag('${msg.id}', 'none')">Clear</button>
             </div>
             <button class="context-btn" onclick="viewContext('${msg.id}')">View Context</button>
         </div>
     `;
+}
+
+function getFlagIcon(flag) {
+    if (flag === 'green') return '🟢';
+    if (flag === 'red') return '🔴';
+    if (flag && flag.startsWith('pending_react:')) {
+        const emoji = flag.split(':')[1];
+        return `<span title="Pending reaction: ${emoji}">⏳${emoji}</span>`;
+    }
+    return '⚪';
+}
+
+let currentMessageIdForReact = null;
+
+async function promptReact(messageId) {
+    currentMessageIdForReact = messageId;
+    const modal = document.getElementById('reaction-modal');
+    const list = document.getElementById('emoji-list');
+    const subtitle = modal.querySelector('.modal-subtitle');
+
+    modal.style.display = 'block';
+    list.innerHTML = '<p class="placeholder">Fetching reactions...</p>';
+    subtitle.innerText = 'Fetching current reactions from Discord...';
+
+    try {
+        const response = await fetch(`${API_BASE}/messages/${messageId}/reactions`);
+        const reactions = await response.json();
+
+        if (reactions.error) {
+            list.innerHTML = `<p class="placeholder" style="color: #ff4747">Error: ${reactions.error}</p>`;
+            subtitle.innerText = 'Failed to fetch reactions.';
+            return;
+        }
+
+        if (reactions.length === 0) {
+            list.innerHTML = '<p class="placeholder">No reactions found on this post.</p>';
+            subtitle.innerText = 'This post has no reactions yet.';
+        } else {
+            subtitle.innerText = `Select one of the ${reactions.length} reactions found:`;
+            list.innerHTML = reactions.map(r => `
+                <div class="emoji-chip" onclick="selectEmoji('${r.emoji_str}')">
+                    <div class="emoji-visual">${r.id ? `<img src="https://cdn.discordapp.com/emojis/${r.id}.png?size=48" style="width:32px;height:32px;">` : r.name}</div>
+                    <div class="emoji-count">${r.count} users</div>
+                </div>
+            `).join('');
+        }
+    } catch (error) {
+        list.innerHTML = `<p class="placeholder" style="color: #ff4747">Network error.</p>`;
+    }
+}
+
+function closeModal() {
+    document.getElementById('reaction-modal').style.display = 'none';
+    currentMessageIdForReact = null;
+}
+
+async function selectEmoji(emojiStr) {
+    if (currentMessageIdForReact) {
+        await toggleFlag(currentMessageIdForReact, `pending_react:${emojiStr}`);
+        closeModal();
+    }
+}
+
+async function customReact() {
+    const emoji = prompt("Enter the emoji you want the bot to react with (e.g. ✅, 👍):");
+    if (emoji && emoji.trim()) {
+        await selectEmoji(emoji.trim());
+    }
+}
+
+window.onclick = function (event) {
+    const modal = document.getElementById('reaction-modal');
+    if (event.target == modal) {
+        closeModal();
+    }
 }
 
 async function toggleFlag(messageId, color) {
@@ -72,11 +181,11 @@ async function toggleFlag(messageId, color) {
             // Find all instances of this message in the UI and update them
             const msgElements = document.querySelectorAll(`[id="msg-${messageId}"]`);
             msgElements.forEach(el => {
-                el.classList.remove('flag-green', 'flag-red');
-                if (color !== 'none') el.classList.add(`flag-${color}`);
+                el.classList.remove('flag-green', 'flag-red', 'flag-pending_react');
+                if (color !== 'none') el.classList.add(`flag-${color.split(':')[0]}`);
 
                 const icon = el.querySelector('.flag-indicator');
-                if (icon) icon.innerText = (color === 'green' ? '🟢' : (color === 'red' ? '🔴' : '⚪'));
+                if (icon) icon.innerHTML = getFlagIcon(color);
             });
         }
     } catch (error) {
@@ -122,12 +231,12 @@ document.getElementById('context-back-btn').addEventListener('click', () => {
     document.getElementById('context-panel').style.display = 'none';
 });
 
-async function fetchStats() {
+async function fetchStats(timeframe = 'all') {
     const container = document.getElementById('frequency-table');
     container.innerHTML = '<p class="placeholder">Loading stats...</p>';
 
     try {
-        const response = await fetch(`${API_BASE}/stats/word-frequency`);
+        const response = await fetch(`${API_BASE}/stats/word-frequency?timeframe=${timeframe}`);
         const stats = await response.json();
 
         if (stats.length === 0) {
